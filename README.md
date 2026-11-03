@@ -1,5 +1,8 @@
 # 亚克力分层材质 · echo-acrylic
 
+[![最新版本](https://img.shields.io/github/v/release/qaz2070/echo-acrylic?style=flat-square&label=%E4%B8%8B%E8%BD%BD)](../../releases/latest)
+[![License](https://img.shields.io/github/license/qaz2070/echo-acrylic?style=flat-square)](LICENSE)
+
 给 ECHO Music 的可交互元素铺一层**染色亚克力板材**：半透明底 + 背后磨砂 + 主题色染色。
 **不改背景**——ECHO 自己的面板底色、透明度、壁纸全部照旧生效，材质只挂在能点、能拖、能输入的东西上。
 
@@ -102,6 +105,18 @@
 
 ## 安装
 
+### 方式一：拖进插件管理（推荐）
+
+1. 到 [Releases](../../releases/latest) 下载 `echo-acrylic-<版本>.zip`
+2. 打开 ECHO → 顶栏「插件管理」
+3. 把这个 zip **直接拖到插件管理页面**上，松手即安装
+   （页面会提示"松开安装插件 · 支持 .zip 压缩包和插件文件夹"）
+4. 装完点「刷新」，插件卡片出现即成功
+
+不需要解压，也不用找 `%APPDATA%`。
+
+### 方式二：手动放目录
+
 插件放在 ECHO 的插件目录下，一个目录一个插件：
 
 ```
@@ -114,10 +129,12 @@
 
 Windows 上是 `C:\Users\<你>\AppData\Roaming\echo-music\plugins\echo-acrylic\`。
 
-把本仓库的 `manifest.json` / `index.js` / `style.css` / `icon.svg` 复制进去，重启 ECHO 即可。
+把 zip 里的四个文件解压进去，重启 ECHO 即可。
 （`README.md`、`LICENSE`、`.gitignore` 不用复制，宿主不读它们。）
 
-升级版本时**覆盖同名文件**后重启，配置存在 ECHO 的设置库里，不会丢。
+### 升级
+
+同样下载新版 zip 拖一次即可，宿主会覆盖旧版本。配置存在 ECHO 的设置库里，不会丢。
 
 ## 使用
 
