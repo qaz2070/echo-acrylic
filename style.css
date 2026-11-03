@@ -1,0 +1,713 @@
+/* ═══════════════════════════════════════════════════════════
+   亚克力材质 v3.3.13 / 只给可交互元素上板
+   ═══════════════════════════════════════════════════════════
+
+   ▍这一版的核心约束（用户原话：不改背景，只改有互动按键的亚克力）
+   ───────────────────────────────────────────────────────────
+   v2.x 直接接管了 ECHO 的 --surface-* 变量，把侧栏、内容区、播放栏
+   **三块大面板**都改成了半透明+模糊+染色。那等于把整个背景换掉了。
+
+   现在全部退回：ECHO 自己的 panelOpacity 设置重新生效，大面板底色、
+   模糊、壁纸透过率一律不碰。材质只挂在**能点、能拖、能输入**的元素上。
+
+   ▍唯一的例外：播放栏整条（组 2）
+   用户后来单独指出「播放栏还原成上一版，不然太浅了」。原因是那排
+   按钮只有 30 多像素，backdrop-filter 糊不出东西，只看得见一圈轮廓。
+   所以只有 .skin-player-panel 这一块恢复了整条染色玻璃 + 磨砂，
+   其余面板仍然完全交给 ECHO。
+
+   移除清单（不要加回来）：
+     · --surface-main-* / --surface-backdrop-filter 接管
+     · .sidebar 整块玻璃底板
+     · .style-recommend-panel / .profile-overview / .profile-details 区块面板
+     · .fm-play-section 私人FM 当前播放条
+   这些要么是背景层，要么是纯布局容器（本身没有点击行为）。
+
+   ▍三条老规矩
+   ───────────────────────────────────────────────────────────
+   · 不要高光。没有顶部亮线、没有边缘聚光，只有一圈极淡的板边轮廓。
+   · 不碰 background-color（ECHO 的 hover / 选中态靠它），
+     板材一律用 background-image 叠。
+   · 列表整块连续，不是每行一条白条。
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── 变量层 ─────────────────────────────────────────────────
+   --acr-* 由 JS 用 inline style + important 写入（优先级最高，滑块必定生效）。
+   这里写的是**没有 !important 的兜底默认值**，只在插件注入前的一瞬间起作用。 */
+html.acr-on:is(.app-background-enabled, :has(.theme-background)) {
+  /* 染料 = 主题色与白的混合。有色亚克力是「白基底 + 少量染料」，
+     直接拿饱和主题色叠上去会绿得发黑。
+     var(--color-primary) 由 ECHO 写在 html 上，换主题即变，这里自动跟随。 */
+  --acr-dye: color-mix(in srgb, var(--color-primary, #00cc65) 45%, white);
+
+  /* 四组颜色：用户自定义了就用自己的，否则用染料。
+     add = 侧栏那根「新建」细条，它有自己的浓度/磨砂，
+     因为 9px 高的一条细线和一大块卡片的感知重量完全不同。 */
+  --acr-col-sb: var(--acr-color-sb, var(--acr-dye));
+  --acr-col-pl: var(--acr-color-pl, var(--acr-dye));
+  --acr-col-ct: var(--acr-color-ct, var(--acr-dye));
+  --acr-col-add: var(--acr-color-add, var(--acr-dye));
+
+  /* 分区总开关（由 index.js 挂 html 类）：
+       acr-z-sb / acr-z-pl / acr-z-ct / acr-z-add
+     关掉某一组时，该组的**全部规则**因为选择器不命中而整体失效，
+     元素 100% 回到 ECHO 原生外观（不是「调成透明」那种残留半套）。 */
+
+  /* 三组浓度（基准值）。
+     v3.1.2 起三组起点拉到同一档（播放栏 30 / 侧栏 24 / 内容区 24），
+     原因是「侧栏拖到 14% 几乎看不出、播放栏拖到 26% 就完全不透明」——
+     侧栏原来基准只有 16%、内容区 18%，再乘上组内加成之后才勉强 20%，
+     同一条滑块在三组里落在完全不同的观感区间。 */
+  --acr-a-sb: 24%;
+  --acr-a-pl: 30%;
+  --acr-a-ct: 24%;
+  /* 细条（add）：只有 9px 高，同等百分比下看起来远轻于一块板，
+     所以基准给到 38%（≈ 侧栏 24% × 1.6），肉眼才和旁边卡片同重。 */
+  --acr-a-add: 38%;
+
+  /* 组内派生 —— v3.1.2 起全部归一，等于基准值。
+     用户调「侧栏」就是整组同一个浓度，卡片、导航项、快捷方块同浓，
+     不会出现「大卡片有板、旁边按钮淡一档」的错位。
+     唯一保留差异的是播放栏按钮：它叠在整条底板之上，同浓会白成块。 */
+  --acr-a-sb-card: var(--acr-a-sb);
+  --acr-a-sb-ctrl: var(--acr-a-sb);
+  --acr-a-pl-ctrl: calc(var(--acr-a-pl) * 0.40);
+  --acr-a-ct-card: var(--acr-a-ct);
+  --acr-a-ct-ctrl: var(--acr-a-ct);
+  --acr-a-ct-tray: var(--acr-a-ct);
+  --acr-a-ct-head: var(--acr-a-ct);
+
+  /* 三组磨砂基准。
+     ▍为什么侧栏 / 内容区比播放栏高（26 vs 20）
+     模糊能不能「看见」，取决于 blur 半径和元素尺寸的比例：
+       · 播放栏是一条 1700×88 的整板，20px 就足够把背后壁纸抹成
+         均匀色块 —— 所以它拖到 25% 左右就到顶了，再调看不出变化；
+       · 侧栏一个条目才 190×40、内容区一个按钮才 300×36，同样 20px
+         只是把边缘柔开，中间仍然能看出壁纸的走向 → 用户会觉得
+         「侧栏的模糊根本没生效」。
+     所以小面积组给更大的半径做补偿，三组在视觉上才是同一档。
+     （这条和浓度不同，浓度可以靠调滑块解决，半径是几何问题。） */
+  --acr-blur-sb: 26px;
+  --acr-blur-pl: 20px;
+  --acr-blur-ct: 26px;
+  /* 细条（add）：只有 9px 高，磨砂糊的是条内那一条壁纸，
+     16px 足够把它抹成均匀色块；悬停撑开成板时用的也是这一个值。 */
+  --acr-blur-add: 16px;
+
+  /* 组内派生磨砂，同样归一（原因同浓度）。
+     播放栏按钮稍微收一点，避免在已经糊透的底板上再糊一次。 */
+  --acr-blur-sb-card: var(--acr-blur-sb);
+  --acr-blur-sb-ctrl: var(--acr-blur-sb);
+  --acr-blur-pl-ctrl: calc(var(--acr-blur-pl) * 0.85);
+  --acr-blur-ct-card: var(--acr-blur-ct);
+  --acr-blur-ct-ctrl: var(--acr-blur-ct);
+  --acr-blur-ct-tray: var(--acr-blur-ct);
+  --acr-blur-ct-head: var(--acr-blur-ct);
+
+  /* 质感 */
+  --acr-e: 0.24;   /* 板边轮廓强度 */
+  --acr-s: 0.7;    /* 投影 */
+  --acr-k: 1;      /* 总强度 */
+}
+
+/* ─── 关键修复：拆掉侧栏的入场动画 ─────────────────────────
+   `.sidebar-full-panel` 和 `.sidebar-rail` 都带
+       animation: .2s ... both sidebar-*-enter
+   而 `*-enter` 的关键帧是 opacity 0 → 1，`fill-mode: both`
+   让元素在动画结束后**继续保留动画状态**。Chrome 于是把它当成
+   一直在做 opacity 合成的元素 → 它成了 **backdrop root** →
+   里面所有元素的 backdrop-filter 只能取到它内部的内容（全是透明的
+   文字和图标），取不到外面的壁纸。
+
+   结果就是：侧栏的板能染色、能描边，但磨砂滑块从 0 拖到 60
+   画面完全不动 —— 因为它糊的是一片空白。
+
+   对照实验（真实 Edge，非 headless，四个格子同样的 blur(20px) 板）：
+     1 父无特殊样式            → 板内红黄条纹糊成渐变 ✔
+     2 父带 opacity 淡入动画    → 板内条纹依然清晰 ✘
+     3 父带 isolation:isolate  → 糊成渐变 ✔（isolation 不是元凶！）
+     4 父动画 + isolation      → 依然清晰 ✘
+   所以之前撤 isolation 是走错方向，这里改回 auto（ECHO 的层叠
+   上下文原样保留），真正要拆的是 animation。
+
+   代价只是侧栏展开/收起时少一个 0.2s 淡入，肉眼几乎无感；
+   换来的是磨砂滑块终于有反馈。 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-full-panel,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail {
+  animation: none !important;
+}
+
+/* ═══ 根因修复：clip-path 截断了内容区所有板的 backdrop ══════════
+   现象：拖磨砂滑块，侧栏的板有反应，内容区的卡片 / tab / 搜索框
+         一动不动；把 blur 从 0 调到 60 像素级也零变化。
+
+   真实 Electron 里用 CDP 逐属性排查的结果（对卡片祖先链一次性中和
+   contain / will-change / transform / isolation / filter /
+   backdrop-filter / opacity / content-visibility / mask /
+   clip-path / mix-blend-mode / transform-style / perspective，
+   每次只放一个属性通过，测 blur(0) 与 blur(30) 的像素标准差差）：
+
+     BASELINE        0.00   ← 模糊完全无效
+     clip-path 放行  30.76  ← 只有它一个能让模糊活过来
+     其余全部         0.00
+
+   **元凶是 `.scrollbar-wrap`（内容区滚动容器）上的 clip-path。**
+   ECHO 的样式表里有一条：
+
+     .page-scroll-area[data-v-1b7040ce] .scrollbar-wrap {
+       clip-path: inset(var(--page-sticky-inset, 0px) 0 0 0);
+     }
+
+   `--page-sticky-inset` 默认 0，所以算出来是 `inset(0px)`——看上去
+   什么也没裁，但它照样让这个元素成为 **backdrop root**：里面所有板的
+   backdrop-filter 只能采样 root 内部已绘制的内容，采不到外面的壁纸，
+   采样为空 = 等于没写。数值再大也没用，这就是「拖滑块毫无反应」。
+
+   侧栏没事，是因为侧栏的滚动容器 `.scrollbar-wrap` 的 clip-path 是
+   none（上一条规则只挂在 `.page-scroll-area` 上，侧栏不是那个组件）。
+
+   修法：把这条裁剪关掉。`inset(0px)` 本来就和 overflow 的裁剪边界
+   重合，视觉上没有任何变化；真正会变的是**有吸顶小标题的页面**
+   （播放历史、歌单详情、专辑详情这类，`--page-sticky-inset` =
+   吸顶标题高度），滚上去的行会从吸顶标题上方透出来。
+   那种页面用一个高度为 `--page-sticky-inset` 的毛玻璃横条把它盖住
+   （见下面 0.3），既遮住穿透又和亚克力风格一致。
+   注意：遮挡层只能在**裁剪层之外**（`::before` 挂在 .page-scroll-area
+   上，不在 .scrollbar-wrap 里面），否则它自己又会变成 backdrop root。 */
+html.acr-on.acr-z-ct .page-scroll-area .scrollbar-wrap,
+html.acr-on.acr-z-ct .scrollbar-wrap {
+  clip-path: none !important;
+}
+
+/* 0.3 吸顶区防穿透板：把「本该被 clip-path 裁掉」的那块补回来。
+   高度直接吃 ECHO 自己的 --page-sticky-inset，没有吸顶标题的页面
+   算出来 0px，这块等于不存在，不会多出一条横带。
+
+   板材直接走**内容区那一组**（--acr-col-ct / --acr-a-ct-tray /
+   --acr-blur-ct-tray），不再另开一套参数 —— 用户调内容区时它跟着变，
+   不会出现「两块板不是一个颜色」。磨砂给 max(…, 14px) 兜底：
+   内容区磨砂被拖到 0 时它也得糊得住行文字，否则就等于没遮。
+
+   四角都收圆（--acr-sticky-r）。用户原话「4 角要有弧度不是直角」——
+   之前只收底边两角，是因为怕顶角漏出穿透的行；现在板两侧内缩了，
+   顶角露出的是窗口栏那一小条，可以收圆。 */
+html.acr-on.acr-z-ct .page-scroll-area::before {
+  content: '';
+  position: absolute;
+  /* 宽度 = 列表托盘宽度 + 两侧各 --acr-sticky-grow（默认 12px）。
+     跟列表**严格同宽**反而显得板是被列表框住的，两边各多出这一小条
+     （用户截图里红框标的那点留白）才像一块自己浮着的板。
+     --acr-sticky-x 是列表相对容器的内缩量，由 index.js 按实际布局量 —
+     窄窗口 ECHO 会收 padding，写死 24 就对不齐了。 */
+  left: max(0px, calc(var(--acr-sticky-x, 24px) - var(--acr-sticky-grow, 12px)));
+  right: max(0px, calc(var(--acr-sticky-x, 24px) - var(--acr-sticky-grow, 12px)));
+  top: 0;
+  /* 高度砍掉 --acr-sticky-cut：吸顶区最下面那一行是**列表表头**，它自己
+     已经有板（3.4 那条）。板盖到它身上就是两层亚克力叠着，交界处会明显
+     深一档 —— 用户点名不要。砍掉这一段，表头区域只剩它自己那一层。
+     cut 由 index.js 按表头实际位置量，没有表头的页面算 0。 */
+  height: max(0px, calc(var(--page-sticky-inset, 0px) - var(--acr-sticky-cut, 0px)));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-tray), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-tray), transparent)
+  );
+  -webkit-backdrop-filter: blur(max(var(--acr-blur-ct-tray), 14px)) saturate(1.12);
+  backdrop-filter: blur(max(var(--acr-blur-ct-tray), 14px)) saturate(1.12);
+  border-radius: var(--acr-sticky-r, 16px);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(3px * var(--acr-s)) calc(14px * var(--acr-s)) rgb(0 0 0 / calc(0.10 * var(--acr-s)));
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  /* 淡出走这条（90ms）—— 过渡属性取的是**变化后**那条规则的 computed
+     style，所以「隐藏」用这里的值。收得快一点：板一旦不该在这儿了，
+     就别在半空里多晃。淡入 160ms 写在下面 .acr-stuck 那条上。 */
+  transition: opacity 90ms ease;
+}
+
+/* ▍只在「小」阶段显形（v3.3.5）
+   头部收拢有三个阶段（用户截的三张图）：
+     大 —— 刚进页面，大头部完整，什么都还没滚；
+     中 —— 头部滚走一半，列表还没顶到吸顶栏；
+     小 —— 头部完全收成吸顶条，**列表行开始钻到吸顶栏底下**，
+           标题/工具栏/表头和歌曲行糊成一团（这就是用户说的「杂乱」）。
+   大、中阶段必须完全不遮挡（头部要能直接看壁纸），只有小阶段才盖板 ——
+   所以显形条件不是「滚动过」，而是「列表行真的进入了吸顶区」，
+   由 index.js 判定后挂 .acr-stuck。
+
+   两难没变，只是把代价挪到了真正需要的地方：
+     · 小阶段盖板：挡住穿透，代价是这条吸顶区变磨砂；
+     · 关掉（设置里「吸顶区防穿透」）：全程透壁纸，但小阶段会文字叠文字。
+   裁剪（ECHO 原生那条 clip-path）能两全，但会让容器变 backdrop root，
+   内容区所有板的磨砂立刻失效 —— 那是更早的一个坑，不能回退。 */
+html.acr-on.acr-z-ct.acr-band.acr-stuck .page-scroll-area::before {
+  opacity: 1;
+  /* 淡入走这条（160ms）：盖上来得柔和，不至于「啪」一下糊上去。
+     配合 index.js 的 STUCK_HOLD（显形前要连续满足 140ms）——
+     过渡期那种 1~2 帧的误判根本来不及触发，闪现就没了。 */
+  transition: opacity 160ms ease;
+}
+
+/* ─── 顺带中和其它可能截断 backdrop 的中转层 ─────────────────
+   `.skin-main-panel` 自己带 backdrop-filter（= backdrop root），
+   内容区的板全在它里面，所以这一层也要砍掉，否则哪天它被 ECHO 的
+   「面板磨砂」打开，所有板立刻全哑。
+   isolation 一并清掉：它不是元凶（实测父 isolation 时子板照糊），
+   但少一个变量。副作用是面板内 z-index:-1 的装饰层会沉到面板底色
+   之下，面板底色半透明，视觉上只是淡一点。
+   别顺手给这两层补 position:relative，会挪动装饰层的位置。 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .skin-main-panel,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .main-content {
+  isolation: auto !important;
+}
+
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .skin-main-panel {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* ═══ 组 1：侧栏（展开 + 收起）═══════════════════════════════
+   两套 DOM 必须一起管，否则会「展开有板、收起没板」：
+     展开 .sidebar-full-panel → .sidebar-nav-item / .sidebar-library-item
+     收起 .sidebar-rail       → .sidebar-rail-item（38×38 方块）
+   两者共用 scopeId data-v-79285cdf，但不是同一个类。
+
+   ⚠ 侧栏本体 .sidebar 不上板 —— 那是背景。这里只上里面的项。 */
+
+/* 1.1 侧栏卡片：用户卡（可点进个人中心）、歌单条目 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .user-info-card,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-library-item {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-sb) var(--acr-a-sb-card), transparent),
+    color-mix(in srgb, var(--acr-col-sb) var(--acr-a-sb-card), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-sb-card)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-sb-card)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s))) !important;
+}
+
+/* 1.2 侧栏控件：快捷方块、加号、导航项、收起态导航块、
+       收起态头像、标题旁 24px 图标（+、⋯）、收起态 tab 组 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .shortcut-card,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-nav-item,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail-item,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail-avatar-btn,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail-tabs,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-section-action {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-sb) var(--acr-a-sb-ctrl), transparent),
+    color-mix(in srgb, var(--acr-col-sb) var(--acr-a-sb-ctrl), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-sb-ctrl)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-sb-ctrl)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s))) !important;
+}
+
+/* 1.3 选中态：原生主题色底只有 12%，板压满会把它冲成灰白，
+       所以选中项板材 ×0.45，让主题色透出来。展开 / 收起两套一起。 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-nav-item.is-active,
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail-item.is-active {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-sb) calc(var(--acr-a-sb-ctrl) * 0.45), transparent),
+    color-mix(in srgb, var(--acr-col-sb) calc(var(--acr-a-sb-ctrl) * 0.45), transparent)
+  ) !important;
+}
+
+/* 1.4 收起态 tab 的选中滑块：实底陷阱。
+       原生 background 用 --color-bg-sidebar（实色），不压透就会
+       「选中那半是实心侧栏色、另半是亚克力」。
+       压掉底色，改用比托盘亮一档的板表达选中，原生主题色内描边保留。 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-rail-tab-indicator {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-sb) calc(var(--acr-a-sb-ctrl) * 1.12), transparent),
+    color-mix(in srgb, var(--acr-col-sb) calc(var(--acr-a-sb-ctrl) * 1.12), transparent)
+  ) !important;
+}
+
+/* 1.5 侧栏「新建」按钮（.shortcut-add）—— 平时一根 2.4mm 圆头条，悬停弹回原样
+       原生它是虚线框 + 亚克力板的「+」按钮，两种形态都吃：
+         · 两列快捷布局 → 194×28 的宽横条（.is-wide，截图红框那个）
+         · 三列快捷布局 → 93×46 的方块
+       长度一律用 left/right 自适应，所以两种都不用单独写数值。用户要：
+         · 平时收成**实心圆头条**，长度与原按键相同，粗细 = 原封边圆直径
+         · 中心必须对准 ➕ 的中心
+         · 鼠标放上去「弹出」原来那条（即原生 UI）
+
+       实现要点：按钮盒**尺寸一点不动**（原高占位，不推下面内容），
+       视觉全交给伪元素，所以「中心对齐 ➕」自动成立（都在 50% 中线）。
+
+       ::before = 条本体，悬停时 height 撑满 + 变半透明板 + 上磨砂，
+                  一整套过渡，视觉上就是这条条自己「撑开」成板。
+
+       ▍粗细 = --acr-cap（2.4mm），上下与原来的封边圆**相切**（v3.3.11）
+       上一版条是 1mm、两端另画 2.4mm 的圆帽，圆比条粗，看起来像箭头两头的
+       小疙瘩。用户要「线加粗，上下都和圆相切」→ 条高直接取圆的直径，
+       两端就用 border-radius 形成的半球；半球的半径 = 条高/2 = 圆半径，
+       几何上正好相切（圆完全并入条的端头）。所以圆帽那层删掉了，
+       不存在「圆比条粗」也不再需要两个伪元素对齐。
+
+       条满宽（left/right 都为 0）：两端半球各自内切在盒内，
+       总长 = 按钮宽度，和原生横条一样长。
+
+       ▍颜色 / 浓度 / 磨砂 = 独立的一组「新建条」（v3.4.0，分区键 add）
+       早先它跟着侧栏控件那组走，浓度写死 `* 1.6`、颜色借 --acr-col-sb：
+       条只有 9px 高，同等百分比下感知重量远低于一大块板，所以乘了个系数
+       硬凑到和卡片同重。但这意味着用户没法单独调它 —— 想把线压淡一点就得
+       连带把整个侧栏调淡。现在单独成组：
+         · 细线态 = --acr-a-add（默认 38%，正好是侧栏 24% × 1.6）
+         · 悬停撑开 = --acr-a-add × 0.63（≈24%，和侧栏控件同浓，
+           否则一大块板用 38% 会明显比旁边快捷卡片重一档）
+       两者共用同一个滑块，调一个两态一起变，比例固定。
+       磨砂同理：细线态和撑开态都用 --acr-blur-add（默认 16px）。
+
+       ⚠ 悬停热区 = 整个按钮盒，仍然比 9px 的条大得多。这是故意的：
+         不放热区根本瞄不准；而撑开只是画出来，不改布局，
+         鼠标不会因为「板长出来」被挤出盒子而抖动。 */
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add {
+  position: relative !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  /* 原生是 0.8px dashed 的「虚线添加框」。细线态留着就是一条空虚线框，
+     所以压透明；悬停时再放回来（它就是「原来的 UI」的一部分）。 */
+  border-color: transparent !important;
+  transition: border-color 200ms ease;
+}
+
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add::before {
+  content: '';
+  position: absolute;
+  /* 满宽：两端半球靠 border-radius 自己内切在盒内，不需要再让位 */
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  /* 粗细 = 封边圆直径 → 条上下边缘与圆相切 */
+  height: var(--acr-cap, 2.4mm);
+  border-radius: 999px;
+  /* 半透明、跟板同配方，但走 add 自己那组参数 */
+  background-color: color-mix(
+    in srgb, var(--acr-col-add) var(--acr-a-add), transparent
+  );
+  -webkit-backdrop-filter: blur(var(--acr-blur-add)) saturate(1.12);
+  backdrop-filter: blur(var(--acr-blur-add)) saturate(1.12);
+  box-shadow:
+    inset 0 0 0 1px transparent,
+    0 0 0 0 transparent;
+  pointer-events: none;
+  z-index: 1;
+  transition:
+    height 260ms cubic-bezier(.22, 1, .3, 1),
+    left 260ms cubic-bezier(.22, 1, .3, 1),
+    right 260ms cubic-bezier(.22, 1, .3, 1),
+    border-radius 260ms cubic-bezier(.22, 1, .3, 1),
+    background-color 200ms ease,
+    box-shadow 220ms ease,
+    -webkit-backdrop-filter 200ms ease,
+    backdrop-filter 200ms ease;
+}
+
+/* 悬停：细线撑开成原生那块板（走 add 自己的色 / 浓度 / 磨砂） */
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add:hover {
+  border-color: rgb(0 0 0 / 0.18) !important;
+}
+
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add:hover::before {
+  height: 100%;
+  border-radius: 10px;
+  /* 面积变大 20 倍，同浓度会明显偏重，所以按 0.63 收一档
+     （38% × 0.63 ≈ 24%，和侧栏控件那排板同浓） */
+  background-color: color-mix(in srgb, var(--acr-col-add) calc(var(--acr-a-add) * 0.63), transparent);
+  -webkit-backdrop-filter: blur(var(--acr-blur-add)) saturate(1.12);
+  backdrop-filter: blur(var(--acr-blur-add)) saturate(1.12);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s)));
+}
+
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add svg {
+  position: relative;
+  z-index: 3;
+  opacity: 0;
+  transform: scale(.5);
+  transition:
+    opacity 140ms ease,
+    transform 200ms cubic-bezier(.22, 1.3, .4, 1);
+}
+
+html.acr-on.acr-z-add:is(.app-background-enabled, :has(.theme-background)) .shortcut-add:hover svg {
+  opacity: 1;
+  transform: scale(1);
+  transition-delay: 70ms;
+}
+
+/* 1.6 导航项圆角 + 间距（v3.3.13）
+   原生 `.sidebar-nav-item` 用的 `rounded-item` 只有 6px，条高 37px，
+   6px 在这么扁的条上等于没圆角；再加上三条之间只有 2px 缝、每条底部
+   还压着一层板投影，读起来就是「一块被切成三段的直角色块」，板边界也
+   被缝里的暗色糊住 —— 用户说的「像 90°长方形、UI 不明显、下面有层黑」
+   就是这个组合。
+   圆角提到 12px、缝放到 8px（原生 space-y-0.5 的 2px 会被折叠掉，所以
+   margin-bottom 直接给 8px），每条才独立成卡；
+   板材/描边/投影的配方一律不动，和侧栏其它项保持一致。 */
+html.acr-on.acr-z-sb:is(.app-background-enabled, :has(.theme-background)) .sidebar-nav-item {
+  border-radius: 12px !important;
+  margin-bottom: 8px !important;
+}
+
+/* ═══ 组 2：播放栏 ═══════════════════════════════════════════
+   整条染色玻璃胶囊 + 板内按钮再浮起薄薄一层。
+
+   ▍为什么要恢复整条底板（v3.1.0）
+   v3.0 只给「那排图标按钮」上板、底板交还给 ECHO，结果：
+     · 按钮只有 28~36px，backdrop-filter 取到的糊块太小，
+       糊了也看不出糊——用户看到的只是一圈极淡的轮廓；
+     · ECHO 的 --bg-player 是半透明实底，板的浅色被它稀释，
+       整体「太浅」。
+   现在按用户要求还原 v2.x 的观感：压掉 --bg-player，把染色渐变
+   直接当底板，模糊加在面板自身上（面板是 backdrop 的最后一层，
+   不存在 isolation 截断，糊到的就是壁纸）。
+   面板自己的 panelOpacity 设置在这块上不再生效 —— 这是这一块
+   唯一的越权，用户点名要的。
+
+   ▍为什么不碰 .main-player-panel 的底色
+   它没有 background（只有 isolation + radius + overflow），
+   真正出颜色的是外面的 .skin-player-panel。 */
+
+/* 2.0 整条底板：染色 + 磨砂 + 胶囊形状 + 一圈板边。
+   两端只留 2px 浮空：workspace 本身已经缩边 --layout-edge-inset，
+   用 calc 反推而不是写死 —— 换断点不会跑偏。 */
+html.acr-on.acr-z-pl:is(.app-background-enabled, :has(.theme-background)) .skin-player-panel {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-pl) var(--acr-a-pl), transparent),
+    color-mix(in srgb, var(--acr-col-pl) var(--acr-a-pl), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-pl)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-pl)) saturate(1.12) !important;
+  border-radius: 999px !important;
+  margin-inline: calc(2px - var(--layout-edge-inset, 8px)) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(4px * var(--acr-s)) calc(18px * var(--acr-s)) rgb(0 0 0 / calc(0.14 * var(--acr-s))) !important;
+}
+
+/* 内层包装只跟圆角，别再缩一次、也别再叠一块板 */
+html.acr-on.acr-z-pl:is(.app-background-enabled, :has(.theme-background)) .main-player-panel {
+  border-radius: 999px !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+/* 2.1 播放栏图标按钮。.playerbar-action-anchor 是那个 28~36px
+   的锚点（inline-flex + relative），真正的 button 套在里面。
+   板挂在锚点上，尺寸才和点击热区一致。
+   因为底板已经有 30%，这里只取 0.55 倍（约 16%）——
+   两层同色叠满会糊成白块，薄一层才有「玻璃条里嵌着几块小玻璃」的层次。
+
+   ▍排除右端 .player-actions 里的两个（v3.3.2，用户点名不要）
+     「音质 A + OFF 徽标」和「播放队列」这两个按钮不上面板。
+     它们在 DOM 上和左边那排、中间播放键是同一种锚点，没法靠类名区分，
+     只能靠位置：整条栏右侧 .player-actions 里恰好只有这两个 anchor
+     （其余是 span.echo-popover-trigger / .playerbar-more-anchor，
+     本来就没被这条规则命中）。
+     :not() 里放后代选择器是 Selectors 4 的写法，Chromium 支持；
+     实测命中 7 个（左 4 + 中 3）、排除 2 个，正是想要的。 */
+html.acr-on.acr-z-pl:is(.app-background-enabled, :has(.theme-background)) .playerbar-action-anchor:not(.player-actions .playerbar-action-anchor) {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-pl) var(--acr-a-pl-ctrl), transparent),
+    color-mix(in srgb, var(--acr-col-pl) var(--acr-a-pl-ctrl), transparent)
+  ) !important;
+  border-radius: var(--radius-control, 10px) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-pl-ctrl)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-pl-ctrl)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))) !important;
+}
+
+/* ═══ 组 3：内容区（所有页面）════════════════════════════════
+   根面板 .skin-main-panel 不动（v2.x 的 --surface-main-* 接管已撤）。
+   下面这些是「真的能点」的元素。 */
+
+/* 3.1 卡片：网格单曲卡（点一首就播）、歌单卡、功能卡 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .style-song-grid .song-card,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .card-container,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .home-feature-card,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .playlist-card,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .plugin-card {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-card), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-card), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-card)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-card)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s))) !important;
+}
+
+/* 3.2 控件：搜索框 / tab / 标签 / 各类按钮。
+   覆盖清单（每条都是踩坑补的）：
+   · .tb-search-input-wrap   顶栏搜索框
+   · .song-search-input      列表页搜索框（历史/专辑/歌手/歌单/收藏共用
+                             SongSearchInput），跟顶栏那套不是同一个类名
+   · .song-locate-btn        搜索框右侧的圆形定位按钮，缺一个就割裂
+   · .soft-accent-action     soft-primary 按钮（「播放」），底是主题色 12%
+   · .soft-secondary-action  soft-secondary 按钮（「刷新」这类）。原生底是
+                             --control-muted-bg = content-tone 5%，在壁纸上
+                             等于没底，所以和旁边的「播放」一个有一个没有
+   · .soft-neutral-action    同一套中性底，一并补
+   · .action-btn             详情页操作按钮（排除 .primary：底色本身是主题色，
+                             叠上去会冲淡；排除 .favorite/.emphasized：红底会变粉）
+   · .profile-page-header button  个人中心页头那排图标（好友/编辑/客服/音效/退出）
+   ⚠ .song-locate-btn 在原生里和 .soft-secondary-action 属于同一组选择器，
+     所以分开写、不照抄那整组，否则 .song-locate-btn 会叠两层板。 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .tb-search-input-wrap,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-search-input,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-locate-btn,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .custom-tab-root,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .style-tag-btn,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .soft-accent-action,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .soft-secondary-action,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .soft-neutral-action,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .profile-page-header button,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .action-btn:not(.primary):not(.favorite):not(.emphasized) {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-ctrl), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-ctrl), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-ctrl)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-ctrl)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s))) !important;
+}
+
+/* 3.3 歌曲列表托盘：材质挂在容器上而不是行上。
+   行保持完全透明，所以整块区域是一块连续的板，行间缝隙透出的也是同一块板 ——
+   这才是 Dock 托盘的观感。行的播放中高亮是 background-color，照常透在上面。
+   （保留理由：行本身可点击，只有一整块底板才不会每行一条白条。） */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-list-container {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-tray), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-tray), transparent)
+  ) !important;
+  border-radius: var(--radius-card, 12px);
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-tray)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-tray)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(3px * var(--acr-s)) calc(14px * var(--acr-s)) rgb(0 0 0 / calc(0.10 * var(--acr-s))) !important;
+}
+
+/* 3.4 列表表头：独立一块带弧度的板（整行都是排序按钮）。
+   表头原生只有一条 1px 下边线、没有任何底色，会跟下面的列表糊成一片。
+   - 比托盘亮一档，才看得出「表头浮在托盘上」；
+   - border-bottom 必须去掉，直边线会从圆弧两端戳出来；
+   - 选择器不依赖构建期 hash：靠「带 .song-sort-choice 的 h-11 网格」定位，
+     末尾那条带 data-v 的兜底（某些页面排序按钮不渲染）。 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) div.h-11:has(.song-sort-choice),
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) div.h-11[data-v-9b527ddf] {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-head), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-head), transparent)
+  ) !important;
+  border-bottom-color: transparent !important;
+  border-radius: var(--radius-card, 12px) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-head)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-head)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(10px * var(--acr-s)) rgb(0 0 0 / calc(0.10 * var(--acr-s))) !important;
+}
+
+/* 3.5 列表托盘 / 表头跟吸顶板同宽（v3.3.7）
+   吸顶板比列表宽出两侧各 --acr-sticky-grow（见 0.3），于是板下面接着的
+   列表托盘比它窄一圈，接缝处左右各差 12px —— 用户点名「这个区域没和上边
+   同宽」。把托盘和表头各向外扩同样的量：
+       margin-inline: -grow   → 盒子外扩（板材变宽）
+       padding-inline: +grow  → 内容位置原地不动
+   一负一正正好抵消，行、列、文字全在原位，只有板材的宽度变了。
+   只在 .acr-band 下生效：防穿透开关关掉时吸顶板根本不出现，没必要动托盘
+   （也避免关掉开关后列表宽度跟着变，显得莫名其妙）。 */
+html.acr-on.acr-z-ct.acr-band:is(.app-background-enabled, :has(.theme-background)) .song-list-container,
+html.acr-on.acr-z-ct.acr-band:is(.app-background-enabled, :has(.theme-background)) div.h-11:has(.song-sort-choice),
+html.acr-on.acr-z-ct.acr-band:is(.app-background-enabled, :has(.theme-background)) div.h-11[data-v-9b527ddf] {
+  /* width 必须一起改：托盘自己带 w-full（width:100%），只给负 margin
+     不会把它拉宽，只会整块往左挪 12px（实测左边到位、右边还差 24px）。 */
+  width: calc(100% + 2 * var(--acr-sticky-grow, 12px));
+  margin-left: calc(-1 * var(--acr-sticky-grow, 12px));
+  margin-right: calc(-1 * var(--acr-sticky-grow, 12px));
+  padding-left: var(--acr-sticky-grow, 12px);
+  padding-right: var(--acr-sticky-grow, 12px);
+}
+
+/* 3.6 个人主页（v3.3.9）：数据条 + 会员状态卡
+   这页的东西全是「直接浮在壁纸上」的，之前没进任何一组，整页光秃秃 ——
+   用户点名要并入内容区。按老规矩只上**能点的**这两类：
+     · .profile-stat        等级 / 好友 / 关注 / 粉丝 / 访客（button，圆角 6px）
+     · .profile-membership  四张会员状态卡（article，226×48）
+   不给的：
+     · .profile-avatar-button —— 56px 头像图铺满整块，板在底下看不见，
+       只会多一圈描边把头像框住；
+     · .profile-details / .profile-account-summary —— 用户 ID、乐龄这些是
+       背景上的说明文字，不是可交互元素，上了板就变成一整块面板（改背景了）。 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .profile-stat {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-ctrl), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-ctrl), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-ctrl)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-ctrl)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.10 * var(--acr-s))) !important;
+}
+
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .profile-membership {
+  /* 原生圆角是 0，四张又是**严丝合缝并排**的（306/532/758/984，间距 0），
+     不加圆角就变成一条 904px 的直板，块与块之间只剩一条描边缝。
+     收 10px 圆角后四角各留出一个小豁口，才看得出是四张独立的卡。 */
+  border-radius: 10px !important;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-card), transparent),
+    color-mix(in srgb, var(--acr-col-ct) var(--acr-a-ct-card), transparent)
+  ) !important;
+  -webkit-backdrop-filter: blur(var(--acr-blur-ct-card)) saturate(1.12) !important;
+  backdrop-filter: blur(var(--acr-blur-ct-card)) saturate(1.12) !important;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / calc(var(--acr-e) * var(--acr-k))),
+    0 calc(2px * var(--acr-s)) calc(8px * var(--acr-s)) rgb(0 0 0 / calc(0.12 * var(--acr-s))) !important;
+}
+
+/* 行内不要任何额外板材。v1.1 误把 .song-card 当卡片上了材质，
+   结果每行只有左边半截发白 —— 这就是「只覆盖一半」的根源。 */
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-list-row,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-list-row-inner,
+html.acr-on.acr-z-ct:is(.app-background-enabled, :has(.theme-background)) .song-list-container .song-card {
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* ─── 不上材质的例外（背景层 / 纯容器，别加回来）─────────────
+   .skin-main-panel        内容区底板 → ECHO 自己的 panelOpacity 管
+   .sidebar                侧栏底板 → 透明，壁纸直接透
+   .theme-background       壁纸层
+   .title-bar              顶栏整条
+   .style-recommend-panel  风格推荐区块 → 纯容器，无点击
+   .profile-overview/.profile-details  个人中心两块面板 → 纯容器
+   .fm-play-section        私人FM 当前播放条 → 纯容器
+   .cover-container        封面图容器 → 盖了会遮图
+   .mini-*                 迷你播放器 → manifest 里已关
+   ───────────────────────────────────────────────────────── */

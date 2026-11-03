@@ -1,0 +1,17 @@
+# 调试截图与临时产物
+_shots/
+
+# 源码备份
+*.bak
+*.bak_*
+
+# 调试工具（CDP 探针、截图脚本，只在本机用）
+_tools/
+_tools/acr_check.mjs
+
+# 系统 / 编辑器
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

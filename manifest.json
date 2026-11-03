@@ -1,0 +1,17 @@
+{
+  "id": "echo-acrylic",
+  "name": "亚克力分层材质",
+  "version": "3.4.0",
+  "description": "可交互元素（按钮、搜索框、tab、导航项、卡片、列表）上亚克力板材，不改背景：ECHO 自己的面板底色与透明度照旧生效，只有播放栏整条恢复染色玻璃胶囊。四组分区（侧栏 / 播放栏 / 内容区 / 侧栏新建条）各自可开关，并各调颜色、浓度、磨砂；颜色用 color-mix 引用主题色，换主题自动跟随。没有高光，列表整块连续。",
+  "author": "小爱",
+  "icon": "icon.svg",
+  "main": "index.js",
+  "style": "style.css",
+  "runtime": {
+    "miniPlayer": false,
+    "desktopLyric": false
+  },
+  "requires": {
+    "echoMusicVersion": ">=2.2.6-beta.9"
+  }
+}
